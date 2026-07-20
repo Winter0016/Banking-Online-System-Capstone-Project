@@ -17,7 +17,7 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 contract SavingCore is ERC721, Ownable, ReentrancyGuard {
     uint32 private _planIdCounter;
     uint64 private _DepositIdCounter;
-    IVaultManager public vaultManager; // 20 bytes storage.
+    IVaultManager public vaultManager; // 20 bytes storage
     IERC20 public usdc;
     enum DepositStatus {
         ACTIVE,
