@@ -8,7 +8,7 @@ contract MockUSDC is ERC20 {
         _mint(msg.sender, 1000 * 100 * 1e6);
     }
 
-    // Add mint function for testing
+    // Add mint function for testing.
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
     }
