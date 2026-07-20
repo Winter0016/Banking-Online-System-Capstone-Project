@@ -10,7 +10,7 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 
 contract VaultManager is Ownable, Pausable {
     IERC20 public usdc;
-    address public feeReceiver; // 20 bytes
+    address public feeReceiver; // 20 bytes.
     address public savingCore; // 20 bytes
     uint256 public totalPromisedInterest;
 
