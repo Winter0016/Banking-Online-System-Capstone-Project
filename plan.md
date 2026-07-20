@@ -11,7 +11,7 @@
 - **Default plan tenor:** 180 days *(calculated because B=1 is odd)*
 
 **Framework:** Foundry
-**Bonus Challenges:** C1 (Safe Principal), C2 (Solvency Guard), C3 (Partial Early Withdraw), C4 (Top-Up), C5 (Slippage Protection,The Auto-Renew "Griefing" Flaw,Centralization Flaw when pausing, The Illiquid Yield Flaw,...etc).
+**Bonus Challenges:** C1 (Safe Principal), C2 (Solvency Guard), C3 (Partial Early Withdraw), C4 (Top-Up), C5 (Slippage Protection,The Auto-Renew "Griefing" Flaw,Centralization Flaw when pausing, The Illiquid Yield Flaw,....etc).
 
 ---
 
