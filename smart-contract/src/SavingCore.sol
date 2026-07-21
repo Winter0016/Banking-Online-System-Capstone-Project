@@ -119,7 +119,7 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
         usdc.transferFrom(msg.sender, address(this), principal);
     }
     function withdrawAtMaturity(uint256 DepositId) external {
-        Deposit memory userdeposit = deposits[DepositId];
+        Deposit storage userdeposit = deposits[DepositId];
         require(msg.sender == ownerOf(DepositId), "Not owner");
         require(
             userdeposit.status == DepositStatus.ACTIVE,
@@ -141,6 +141,56 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
         usdc.transferFrom(address(vaultManager), msg.sender, interest);
         _burn(DepositId);
     }
+
+    function earlyWithdraw(uint256 DepositId, uint256 withdrawAmount) external {
+        Deposit storage userdeposit = deposits[DepositId];
+        require(msg.sender == ownerOf(DepositId), "Not owner");
+        require(
+            userdeposit.status == DepositStatus.ACTIVE,
+            "Deposit is not active"
+        );
+        require(
+            block.timestamp < userdeposit.maturityAt,
+            "Maturity reached, use withdrawAtMaturity."
+        );
+        require(
+            withdrawAmount > 0 && withdrawAmount <= userdeposit.principal,
+            "Invalid withdraw amount"
+        );
+
+        // 1. Calculate the interest that was originally promised for this specific withdraw amount
+        // so we can remove it from the Vault's debt
+        uint256 promisedInterestToSubtract = _calculateInterest(
+            uint64(withdrawAmount),
+            userdeposit.aprBpsAtOpen,
+            plans[userdeposit.planId].tenorDays
+        );
+        vaultManager.decreaseTotalPromisedInterest(promisedInterestToSubtract);
+
+        // 2. Reduce the principal
+        userdeposit.principal -= uint64(withdrawAmount);
+
+        // 3. Mark deposit as closed and burn NFT ONLY if they withdrew everything
+        if (userdeposit.principal == 0) {
+            userdeposit.status = DepositStatus.CLOSE;
+            _burn(DepositId);
+        }
+
+        // 4. Calculate penalty only on the withdrawn amount
+        uint256 penalty = (withdrawAmount * userdeposit.penaltyBpsAtOpen) / 10000;
+        uint256 remainingPrincipal = withdrawAmount - penalty;
+
+        // 5. Transfer penalty to the fee receiver
+        address feeReceiver = vaultManager.feeReceiver();
+        if (penalty > 0) {
+            require(feeReceiver != address(0), "Fee receiver not set in VaultManager");
+            usdc.transfer(feeReceiver, penalty);
+        }
+
+        // 6. Transfer remaining principal to the user
+        usdc.transfer(msg.sender, remainingPrincipal);
+    }
+
     function _planAllowDeposit(uint32 planId, bool enable) internal {
         plans[planId].enable = enable;
     }
