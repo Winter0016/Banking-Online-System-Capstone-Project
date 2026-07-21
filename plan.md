@@ -135,7 +135,7 @@ To receive full credit for this capstone, the project must include:
   *Purpose:* Retain user liquidity within the protocol by compounding earned interest into a new active term.
   - Calculate earned interest from the matured deposit.
   - Compound it: `newPrincipal = oldPrincipal + interest`.
-  - Open a new deposit (mint new NFT) and mark the old deposit as `ManualRenewed`.
+  - Overwrite the existing deposit struct to save massive gas (no new NFT minted).
 - [ ] **Task 4.2: `autoRenewDeposit()` (Bot)**
   *Purpose:* Provide a "set-and-forget" experience while protecting users from malicious rate drops during bot renewals (Griefing Protection).
   - Enforce the grace period: `require(block.timestamp > deposit.maturityAt + 2 days)`.

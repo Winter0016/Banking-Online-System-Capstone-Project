@@ -142,6 +142,50 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
         _burn(DepositId);
     }
 
+    function renewDeposit(uint256 depositId) external nonReentrant {
+        Deposit storage userdeposit = deposits[depositId];
+        require(msg.sender == ownerOf(depositId), "Not owner");
+        require(userdeposit.status == DepositStatus.ACTIVE, "Deposit is not active");
+        require(block.timestamp >= userdeposit.maturityAt, "Maturity not reached yet.");
+
+        // Gas Optimization: Cache the plan in memory so we only do ONE storage read (Sload)
+        Plan memory currentPlan = plans[userdeposit.planId];
+
+        // 1. Calculate earned interest using cached memory
+        uint256 earnedInterest = _calculateInterest(
+            userdeposit.principal,
+            userdeposit.aprBpsAtOpen,
+            currentPlan.tenorDays
+        );
+
+        // 2. Compound principal
+        uint64 newPrincipal = userdeposit.principal + uint64(earnedInterest);
+
+        // 3. Pull the earned interest from VaultManager to SavingCore
+        usdc.transferFrom(address(vaultManager), address(this), earnedInterest);
+
+        // 4. Overwrite the existing deposit directly
+        userdeposit.principal = newPrincipal;
+        userdeposit.maturityAt = uint40(block.timestamp + (currentPlan.tenorDays * 1 days));
+        userdeposit.aprBpsAtOpen = currentPlan.aprbps; // Current plan APR
+        userdeposit.penaltyBpsAtOpen = currentPlan.withdrawalFeeBps;
+
+        // 5. Calculate new promised interest 
+        uint256 newPromisedInterest = _calculateInterest(
+            newPrincipal,
+            currentPlan.aprbps,
+            currentPlan.tenorDays
+        );
+
+        // Gas Optimization: Combine the two external calls into ONE single call!
+        // Instead of decreasing the old interest and increasing the new, we just calculate the net difference.
+        if (newPromisedInterest > earnedInterest) {
+            vaultManager.increaseTotalPromisedInterest(newPromisedInterest - earnedInterest);
+        } else if (earnedInterest > newPromisedInterest) {
+            vaultManager.decreaseTotalPromisedInterest(earnedInterest - newPromisedInterest);
+        }
+    }
+
     function earlyWithdraw(uint256 DepositId, uint256 withdrawAmount) external {
         Deposit storage userdeposit = deposits[DepositId];
         require(msg.sender == ownerOf(DepositId), "Not owner");
