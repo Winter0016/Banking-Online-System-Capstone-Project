@@ -62,19 +62,22 @@ To receive full credit for this capstone, the project must include:
 
 ## Detailed Sprint Backlog Minimum Work (10-Day Accelerated Timeline)
 
-
 ### Phase 1: Smart Contracts Core & Bonus Logic & Discover vulnerabilities (July 18 - July 22)
 
 #### NOTE: All of this has hidden vulnerabilities, The code implement will be adjusted dynamically based on newly discovered vulnerabilities from time to time.
 
 #### Day 1 (Saturday, July 18): Project Setup & Infrastructure
 - [ ] **Task 1.1:** Run `forge init` to scaffold the project structure.
+  *Purpose:* Initialize the Foundry framework to establish a blazing-fast testing and deployment pipeline.
 - [ ] **Task 1.2:** Install OpenZeppelin contracts via `forge install OpenZeppelin/openzeppelin-contracts --no-commit`.
+  *Purpose:* Integrate audited, industry-standard security modules to protect against basic vulnerabilities.
 - [ ] **Task 1.3: Create `MockUSDC.sol`**
+  *Purpose:* Deploy a simulated stablecoin to guarantee mathematical yield calculations performed locally map 1:1 with mainnet USDC.
   - Inherit from OpenZeppelin `ERC20`.
   - Override the `decimals()` function to return `6`.
   - Add an external `mint(address to, uint256 amount)` function for testing purposes.
 - [ ] **Task 1.4: Create `VaultManager.sol`**
+  *Purpose:* Establish the central reserve to implement the Separation of Concerns pattern, isolating bank funds from logic to reduce the attack surface.
   - Inherit from `Ownable` and `Pausable`.
   - Define state variables: `usdc` (IERC20), `savingCore` (address), `feeReceiver` (address).
   - Define Custom Errors (`OnlySavingCore`, `InvalidAddress`).
@@ -85,15 +88,18 @@ To receive full credit for this capstone, the project must include:
 
 #### Day 2 (Sunday, July 19): SavingCore State & Open Deposit
 - [ ] **Task 2.1: Create `SavingCore.sol` Base**
+  *Purpose:* Deploy the central brain of the protocol to handle user interactions and maintain the state of all deposits.
   - Inherit from OpenZeppelin `ERC721`, `Ownable`, and `ReentrancyGuard`.
   - Define `Plan` struct: `tenorDays`, `aprBps`, `minDeposit`, `maxDeposit`, `earlyWithdrawPenaltyBps`, `enabled`.
   - Define `Deposit` struct: `principal`, `maturityAt`, `aprBpsAtOpen`, `penaltyBpsAtOpen`, `status`, `planId`.
   - Create mappings: `uint256 => Plan` and `uint256 => Deposit`.
 - [ ] **Task 2.2: Plan Management Admin Functions**
+  *Purpose:* Allow the protocol to dynamically adapt to market conditions by offering different APRs, tenors, and penalty rates.
   - Write `createPlan(...)` to add a new plan to the mapping.
   - Write `updatePlan(uint256 planId, uint256 newAprBps)`.
   - Write `enablePlan()` and `disablePlan()`.
 - [ ] **Task 2.3: `openDeposit()` & C5 Slippage Protection**
+  *Purpose:* Secure user funds, snapshot the current APR, and prevent malicious admins from front-running user deposits to lower rates (C5).
   - Write `openDeposit(uint256 planId, uint256 amount, uint256 minExpectedApr)`.
   - Implement C5 logic: `require(plan.aprBps >= minExpectedApr, "Slippage: APR dropped");`
   - Transfer USDC from user to `SavingCore`.
@@ -103,9 +109,11 @@ To receive full credit for this capstone, the project must include:
 
 #### Day 3 (Monday, July 20): Withdrawals, Math & Solvency Guard
 - [ ] **Task 3.1: Update `VaultManager.sol` for C2 (Solvency Guard)**
+  *Purpose:* Mathematically prevent the Admin from withdrawing protocol liquidity if it would cause the vault to default on owed user interest.
   - Add state variable `uint256 public totalPromisedInterest`.
   - Update `withdrawVault(uint256 amount)`: `require(usdc.balanceOf(this) - amount >= totalPromisedInterest)`.
 - [ ] **Task 3.2: `withdrawAtMaturity()`**
+  *Purpose:* Provide the core user exit flow to precisely calculate interest, burn the receipt NFT, and perfectly synchronize the Treasury's debt ledger.
   - Write function taking `depositId`. Verify NFT ownership.
   - Add time check: `require(block.timestamp >= deposit.maturityAt)`.
   - Calculate simple interest: `(principal * aprBps * tenorSeconds) / (365 days * 10000)`.
@@ -113,6 +121,7 @@ To receive full credit for this capstone, the project must include:
   - Call `VaultManager.payInterest(user, interestAmount)`.
   - Burn the NFT and update deposit status to `Withdrawn`.
 - [ ] **Task 3.3: `earlyWithdraw()` & C3 Partial Early Withdraw**
+  *Purpose:* Massively improve UX by allowing depositors to withdraw partial amounts for emergency liquidity, paying penalties only on the withdrawn amount.
   - Update function signature to `earlyWithdraw(uint256 depositId, uint256 withdrawAmount)`.
   - Calculate penalty only on the `withdrawAmount`.
   - Transfer penalty to the `VaultManager`'s `feeReceiver`.
@@ -122,19 +131,23 @@ To receive full credit for this capstone, the project must include:
 
 #### Day 4 (Tuesday, July 21): Renewals & Top-Ups
 - [ ] **Task 4.1: `renewDeposit()` (Manual)**
+  *Purpose:* Retain user liquidity within the protocol by compounding earned interest into a new active term.
   - Calculate earned interest from the matured deposit.
   - Compound it: `newPrincipal = oldPrincipal + interest`.
   - Open a new deposit (mint new NFT) and mark the old deposit as `ManualRenewed`.
 - [ ] **Task 4.2: `autoRenewDeposit()` (Bot)**
+  *Purpose:* Provide a "set-and-forget" experience while protecting users from malicious rate drops during bot renewals (Griefing Protection).
   - Enforce the grace period: `require(block.timestamp > deposit.maturityAt + 2 days)`.
   - Create the new deposit but strictly lock it to the *original* `aprBpsAtOpen` to protect the user from rate drops.
 - [ ] **Task 4.3: `topUpDeposit()` (Challenge C4)**
+  *Purpose:* Prevent NFT fragmentation and reduce user gas costs by keeping their portfolio consolidated under a single active certificate.
   - Allow a user to add USDC to an active deposit.
   - Calculate a weighted average maturity date or separately track the interest for the new principal tranche based on remaining time.
 - **MDR:** Manual renew, auto-renew, and top-ups all compile and execute.
 
 #### Day 5 (Wednesday, July 22): The Principal Safety Net (C1)
 - [ ] **Task 5.1: Implement C1 (Safe Principal)**
+  *Purpose:* Eliminate the "Hostage Principal" flaw, ensuring users can always retrieve their original capital even if the protocol cannot pay the yield right now.
   - Modify `withdrawAtMaturity` to check `usdc.balanceOf(VaultManager)`.
   - If the vault is empty (cannot pay interest), DO NOT revert.
   - Transfer the user's principal back to them so their money is safe.
@@ -146,38 +159,57 @@ To receive full credit for this capstone, the project must include:
 
 #### Day 6 (Thursday, July 23): Unit Testing Basics
 - [ ] **Task 6.1:** Write Setup/Deployment script in Foundry for tests.
+  *Purpose:* Build the Foundry deployment scripts to simulate a live mainnet state for testing.
 - [ ] **Task 6.2:** Test `MockUSDC` minting and decimals.
+  *Purpose:* Ensure the simulated token behaves correctly.
 - [ ] **Task 6.3:** Test Admin restrictions (ensure non-owners cannot call `createPlan` or `fundVault`).
+  *Purpose:* Prove that malicious actors cannot arbitrarily mint funds, alter plans, or drain the treasury.
 - [ ] **Task 6.4:** Test `openDeposit` happy path and revert conditions (min amount, max amount, disabled plan).
+  *Purpose:* Ensure the protocol degrades gracefully when fed invalid data.
 - **MDR:** Base structural tests pass.
 
 #### Day 7 (Friday, July 24): Time-Travel Edge Cases
 - [ ] **Task 7.1:** Use `vm.warp` to simulate passing of 180 days. Test `withdrawAtMaturity` exact interest output.
+  *Purpose:* Prove the mathematical exactness of the interest formulas and penalty deductions against manual calculations.
 - [ ] **Task 7.2:** Test boundary times for grace period: `vm.warp` to `maturity + 1 day` (assert auto-renew fails). `vm.warp` to `maturity + 2 days + 1 second` (assert auto-renew succeeds).
+  *Purpose:* Validate the strict enforcement of auto-renew bots and user manual withdrawals.
 - [ ] **Task 7.3:** Write dedicated tests for C1, C2, C3, C4, C5 logic.
+  *Purpose:* Specifically target and verify the bonus challenge vulnerabilities have been solved.
 - [ ] **Task 7.4:** Run `forge coverage` and write remaining tests to hit >90%.
+  *Purpose:* Achieve >90% code coverage to definitively prove protocol safety to auditors and the grading team.
 - **MDR:** `forge coverage` output proves >90% code coverage.
 
 ### Phase 3: Frontend Integration (July 25 - July 26)
 
 #### Day 8 (Saturday, July 25): React Setup & Read Functions
 - [ ] **Task 8.1:** Run `npx create-vite` (React + TypeScript).
+  *Purpose:* Provide a lightning-fast, type-safe development environment for the frontend.
 - [ ] **Task 8.2:** Install Wagmi and Viem. Configure `WagmiProvider` for localhost.
+  *Purpose:* Establish a seamless, reliable connection between the user's browser wallet and the local Anvil blockchain.
 - [ ] **Task 8.3:** Export ABIs from Foundry and import them into React.
+  *Purpose:* Connect the frontend codebase to the compiled smart contract interfaces.
 - [ ] **Task 8.4:** Build UI to call `SavingCore.plans(id)` and map them to display cards.
+  *Purpose:* Give users a transparent, real-time dashboard of available banking products and interest rates.
 - **MDR:** Frontend successfully displays the saving plans directly from the local blockchain.
 
 #### Day 9 (Sunday, July 26): Write Transactions & User Dashboard
 - [ ] **Task 9.1:** Build the "Deposit" Modal. Use Wagmi `useWriteContract` to call `USDC.approve()`, then call `SavingCore.openDeposit()`.
+  *Purpose:* Orchestrate the complex two-step transaction process into a smooth user experience.
 - [ ] **Task 9.2:** Build the User Dashboard. Fetch all NFTs owned by the connected wallet using `SavingCore.balanceOf()` and `tokenOfOwnerByIndex()`.
+  *Purpose:* Allow users to track their locked principal, expected maturity date, and accrued yield.
 - [ ] **Task 9.3:** Add UI buttons for "Withdraw", "Early Withdraw", and "Top-Up", piping them to the correct smart contract calls.
+  *Purpose:* Connect the frontend UI directly to the secure liquidation functions engineered in Phase 1.
 - **MDR:** End-to-end user flow (connect wallet -> approve -> deposit -> fast forward time via Anvil -> withdraw) works from the browser.
 
 ### Phase 4: Finalization (July 27)
 
 #### Day 10 (Monday, July 27): Documentation & Defense Prep
 - [ ] **Task 10.1:** Populate `README.md`. Write clear instructions on how to run the tests and start the frontend.
+  *Purpose:* Ensure the grading team can boot the local blockchain and launch the frontend without encountering errors.
 - [ ] **Task 10.2:** Answer the 7 Design Questions from the assignment spec directly in the README.
+  *Purpose:* Prove mastery of Solidity patterns and justify the engineering trade-offs made during development.
 - [ ] **Task 10.3:** Write a detailed breakdown of how you solved C1, C2, C3, C4, and C5 for the +10 bonus points.
+  *Purpose:* Explicitly highlight the advanced vulnerabilities discovered and solved, guaranteeing the +10 bonus points.
 - [ ] **Task 10.4:** Record the 3-5 minute demo video using Loom or OBS, walking through the React app.
+  *Purpose:* Provide undeniable visual proof of a fully functioning decentralized application prior to the oral defense.
 - **MDR:** Project is zipped/committed to GitHub, video is uploaded, and you are 100% prepared for the oral defense.
