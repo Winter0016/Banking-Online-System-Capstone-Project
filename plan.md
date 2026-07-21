@@ -141,11 +141,9 @@ To receive full credit for this capstone, the project must include:
   - Enforce the grace period: `require(block.timestamp > deposit.maturityAt + 2 days)`.
   - Overwrite the existing deposit struct to save gas, strictly locking it to the *original* `aprBpsAtOpen` to protect the user from rate drops.
   - **Challenge C5 Discovered & Solved (Unprofitable Liquidation):** Implemented a Yield-Deduction Automation fee (1 USDC). If a user's earned interest cannot cover the bot fee, the system automatically deducts the deficit from their principal, forcefully closes the deposit, and refunds the remaining balance. This prevents users with tiny balances from bleeding their principal to bot fees over time.
-- [ ] **Task 4.3: `topUpDeposit()` (Challenge C4)**
-  *Purpose:* Prevent NFT fragmentation and reduce user gas costs by keeping their portfolio consolidated under a single active certificate.
-  - Allow a user to add USDC to an active deposit.
-  - Calculate a weighted average maturity date or separately track the interest for the new principal tranche based on remaining time.
-- **MDR:** Manual renew, auto-renew, and top-ups all compile and execute.
+- [x] ~~**Task 4.3: `topUpDeposit()` (Challenge C4)**~~ **(SKIPPED - DESIGN FLAW)**
+  *Reason for Skipping:*  discovered a fundamental Game Theory and Banking Economics flaw in the concept of "Top-Ups" for Fixed-Term deposits. Permitting users to inject fresh capital into an old deposit shortly before maturity severely harms the protocol's profitability and defeats the purpose of a fixed lockup. Furthermore, NFT fragmentation is actually beneficial for the bank because it forces users to ladder investments and re-lock fresh capital at current market rates. Thus, Challenge C4 is intentionally omitted to protect protocol health.
+- **MDR:** Manual renew and auto-renew all compile and execute. Top-ups intentionally skipped.
 
 #### Day 5 (Wednesday, July 22): The Principal Safety Net (C1)
 - [ ] **Task 5.1: Implement C1 (Safe Principal)**
