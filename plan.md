@@ -67,16 +67,16 @@ To receive full credit for this capstone, the project must include:
 #### NOTE: All of this has hidden vulnerabilities, The code implement will be adjusted dynamically based on newly discovered vulnerabilities from time to time.
 
 #### Day 1 (Saturday, July 18): Project Setup & Infrastructure
-- [ ] **Task 1.1:** Run `forge init` to scaffold the project structure.
+- [x] **Task 1.1:** Run `forge init` to scaffold the project structure.
   *Purpose:* Initialize the Foundry framework to establish a blazing-fast testing and deployment pipeline.
-- [ ] **Task 1.2:** Install OpenZeppelin contracts via `forge install OpenZeppelin/openzeppelin-contracts --no-commit`.
+- [x] **Task 1.2:** Install OpenZeppelin contracts via `forge install OpenZeppelin/openzeppelin-contracts --no-commit`.
   *Purpose:* Integrate audited, industry-standard security modules to protect against basic vulnerabilities.
-- [ ] **Task 1.3: Create `MockUSDC.sol`**
+- [x] **Task 1.3: Create `MockUSDC.sol`**
   *Purpose:* Deploy a simulated stablecoin to guarantee mathematical yield calculations performed locally map 1:1 with mainnet USDC.
   - Inherit from OpenZeppelin `ERC20`.
   - Override the `decimals()` function to return `6`.
   - Add an external `mint(address to, uint256 amount)` function for testing purposes.
-- [ ] **Task 1.4: Create `VaultManager.sol`**
+- [x] **Task 1.4: Create `VaultManager.sol`**
   *Purpose:* Establish the central reserve to implement the Separation of Concerns pattern, isolating bank funds from logic to reduce the attack surface.
   - Inherit from `Ownable` and `Pausable`.
   - Define state variables: `usdc` (IERC20), `savingCore` (address), `feeReceiver` (address).
@@ -87,18 +87,18 @@ To receive full credit for this capstone, the project must include:
 - **MDR:** Both contracts compile and pass initial syntax checks.
 
 #### Day 2 (Sunday, July 19): SavingCore State & Open Deposit
-- [ ] **Task 2.1: Create `SavingCore.sol` Base**
+- [x] **Task 2.1: Create `SavingCore.sol` Base**
   *Purpose:* Deploy the central brain of the protocol to handle user interactions and maintain the state of all deposits.
   - Inherit from OpenZeppelin `ERC721`, `Ownable`, and `ReentrancyGuard`.
   - Define `Plan` struct: `tenorDays`, `aprBps`, `minDeposit`, `maxDeposit`, `earlyWithdrawPenaltyBps`, `enabled`.
   - Define `Deposit` struct: `principal`, `maturityAt`, `aprBpsAtOpen`, `penaltyBpsAtOpen`, `status`, `planId`.
   - Create mappings: `uint256 => Plan` and `uint256 => Deposit`.
-- [ ] **Task 2.2: Plan Management Admin Functions**
+- [x] **Task 2.2: Plan Management Admin Functions**
   *Purpose:* Allow the protocol to dynamically adapt to market conditions by offering different APRs, tenors, and penalty rates.
   - Write `createPlan(...)` to add a new plan to the mapping.
   - Write `updatePlan(uint256 planId, uint256 newAprBps)`.
   - Write `enablePlan()` and `disablePlan()`.
-- [ ] **Task 2.3: `openDeposit()` & C5 Slippage Protection**
+- [x] **Task 2.3: `openDeposit()` & C5 Slippage Protection**
   *Purpose:* Secure user funds, snapshot the current APR, and prevent malicious admins from front-running user deposits to lower rates (C5).
   - Write `openDeposit(uint256 planId, uint256 amount, uint256 minExpectedApr)`.
   - Implement C5 logic: `require(plan.aprBps >= minExpectedApr, "Slippage: APR dropped");`
@@ -108,11 +108,11 @@ To receive full credit for this capstone, the project must include:
 - **MDR:** `openDeposit` is fully functional and mints an NFT.
 
 #### Day 3 (Monday, July 20): Withdrawals, Math & Solvency Guard
-- [ ] **Task 3.1: Update `VaultManager.sol` for C2 (Solvency Guard)**
+- [x] **Task 3.1: Update `VaultManager.sol` for C2 (Solvency Guard)**
   *Purpose:* Mathematically prevent the Admin from withdrawing protocol liquidity if it would cause the vault to default on owed user interest.
   - Add state variable `uint256 public totalPromisedInterest`.
   - Update `withdrawVault(uint256 amount)`: `require(usdc.balanceOf(this) - amount >= totalPromisedInterest)`.
-- [ ] **Task 3.2: `withdrawAtMaturity()`**
+- [x] **Task 3.2: `withdrawAtMaturity()`**
   *Purpose:* Provide the core user exit flow to precisely calculate interest, burn the receipt NFT, and perfectly synchronize the Treasury's debt ledger.
   - Write function taking `depositId`. Verify NFT ownership.
   - Add time check: `require(block.timestamp >= deposit.maturityAt)`.
@@ -120,7 +120,7 @@ To receive full credit for this capstone, the project must include:
   - Transfer principal to user directly from `SavingCore`.
   - Call `VaultManager.payInterest(user, interestAmount)`.
   - Burn the NFT and update deposit status to `Withdrawn`.
-- [ ] **Task 3.3: `earlyWithdraw()` & C3 Partial Early Withdraw**
+- [x] **Task 3.3: `earlyWithdraw()` & C3 Partial Early Withdraw**
   *Purpose:* Massively improve UX by allowing depositors to withdraw partial amounts for emergency liquidity, paying penalties only on the withdrawn amount.
   - Update function signature to `earlyWithdraw(uint256 depositId, uint256 withdrawAmount)`.
   - Calculate penalty only on the `withdrawAmount`.
@@ -131,15 +131,16 @@ To receive full credit for this capstone, the project must include:
 - **MDR:** Solvency guard is active, and math calculations for early/mature withdrawals are implemented.
 
 #### Day 4 (Tuesday, July 21): Renewals & Top-Ups
-- [ ] **Task 4.1: `renewDeposit()` (Manual)**
+- [x] **Task 4.1: `renewDeposit()` (Manual)**
   *Purpose:* Retain user liquidity within the protocol by compounding earned interest into a new active term.
   - Calculate earned interest from the matured deposit.
   - Compound it: `newPrincipal = oldPrincipal + interest`.
   - Overwrite the existing deposit struct to save massive gas (no new NFT minted).
-- [ ] **Task 4.2: `autoRenewDeposit()` (Bot)**
+- [x] **Task 4.2: `autoRenewDeposit()` (Bot)**
   *Purpose:* Provide a "set-and-forget" experience while protecting users from malicious rate drops during bot renewals (Griefing Protection).
   - Enforce the grace period: `require(block.timestamp > deposit.maturityAt + 2 days)`.
-  - Create the new deposit but strictly lock it to the *original* `aprBpsAtOpen` to protect the user from rate drops.
+  - Overwrite the existing deposit struct to save gas, strictly locking it to the *original* `aprBpsAtOpen` to protect the user from rate drops.
+  - **Challenge C5 Discovered & Solved (Unprofitable Liquidation):** Implemented a Yield-Deduction Automation fee (1 USDC). If a user's earned interest cannot cover the bot fee, the system automatically deducts the deficit from their principal, forcefully closes the deposit, and refunds the remaining balance. This prevents users with tiny balances from bleeding their principal to bot fees over time.
 - [ ] **Task 4.3: `topUpDeposit()` (Challenge C4)**
   *Purpose:* Prevent NFT fragmentation and reduce user gas costs by keeping their portfolio consolidated under a single active certificate.
   - Allow a user to add USDC to an active deposit.
