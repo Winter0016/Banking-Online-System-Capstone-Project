@@ -124,6 +124,7 @@ To receive full credit for this capstone, the project must include:
   *Purpose:* Massively improve UX by allowing depositors to withdraw partial amounts for emergency liquidity, paying penalties only on the withdrawn amount.
   - Update function signature to `earlyWithdraw(uint256 depositId, uint256 withdrawAmount)`.
   - Calculate penalty only on the `withdrawAmount`.
+  - Decrease `VaultManager`'s `totalPromisedInterest` based *only* on the interest the `withdrawAmount` would have earned.
   - Transfer penalty to the `VaultManager`'s `feeReceiver`.
   - Transfer remaining principal (`withdrawAmount - penalty`) to the user.
   - Leave the rest of the principal in the active deposit (C3 Fix).
