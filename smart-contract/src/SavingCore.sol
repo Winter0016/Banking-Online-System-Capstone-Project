@@ -124,6 +124,11 @@ contract SavingCore is
             plans[planId].aprbps,
             plans[planId].tenorDays
         );
+        require(
+            usdc.balanceOf(address(vaultManager)) >=
+                vaultManager.totalPromisedInterest() + interest,
+            "Vault underfunded: interest not pre-funded"
+        );
         vaultManager.increaseTotalPromisedInterest(interest);
 
         _safeMint(msg.sender, tokenId);
@@ -146,7 +151,7 @@ contract SavingCore is
             userdeposit.tenorDaysAtOpen
         );
         vaultManager.decreaseTotalPromisedInterest(interest);
-        
+
         // Checks-Effects-Interactions Pattern: Update state & burn NFT BEFORE external token transfers!
         userdeposit.status = DepositStatus.CLOSE;
         uint256 WithdrawPrincipal = userdeposit.principal;
@@ -204,9 +209,13 @@ contract SavingCore is
 
         // Gas Optimization: Combine the two external calls into ONE single call!
         if (newPromisedInterest > earnedInterest) {
-            vaultManager.increaseTotalPromisedInterest(
-                newPromisedInterest - earnedInterest
+            uint256 netIncrease = newPromisedInterest - earnedInterest;
+            require(
+                usdc.balanceOf(address(vaultManager)) >=
+                    vaultManager.totalPromisedInterest() + netIncrease,
+                "Vault underfunded: interest not pre-funded"
             );
+            vaultManager.increaseTotalPromisedInterest(netIncrease);
         } else if (earnedInterest > newPromisedInterest) {
             vaultManager.decreaseTotalPromisedInterest(
                 earnedInterest - newPromisedInterest
@@ -214,7 +223,10 @@ contract SavingCore is
         }
     }
 
-    function earlyWithdraw(uint256 DepositId, uint256 withdrawAmount) external nonReentrant {
+    function earlyWithdraw(
+        uint256 DepositId,
+        uint256 withdrawAmount
+    ) external nonReentrant {
         Deposit storage userdeposit = deposits[DepositId];
         require(msg.sender == ownerOf(DepositId), "Not owner");
         require(
@@ -286,7 +298,7 @@ contract SavingCore is
 
         for (uint256 i = 0; i < _DepositIdCounter; i++) {
             Deposit memory d = deposits[i];
-            
+
             if (
                 d.status == DepositStatus.ACTIVE &&
                 d.enableBot == true &&
@@ -312,7 +324,9 @@ contract SavingCore is
         }
     }
 
-    function performUpkeep(bytes calldata performData) external override nonReentrant {
+    function performUpkeep(
+        bytes calldata performData
+    ) external override nonReentrant {
         uint256[] memory depositIds = abi.decode(performData, (uint256[]));
         for (uint256 i = 0; i < depositIds.length; i++) {
             _autoRenewDeposit(depositIds[i]);
@@ -321,7 +335,7 @@ contract SavingCore is
 
     function _autoRenewDeposit(uint256 depositId) internal {
         Deposit storage userdeposit = deposits[depositId];
-        
+
         // Double check conditions at execution time
         if (
             userdeposit.status != DepositStatus.ACTIVE ||
@@ -344,28 +358,36 @@ contract SavingCore is
         );
 
         // 2. DeFi Liquidation Engine & Automation Fee
-        uint256 fee = vaultManager.feeReceiver() != address(0) ? AUTOMATION_FEE : 0;
-        
+        uint256 fee = vaultManager.feeReceiver() != address(0)
+            ? AUTOMATION_FEE
+            : 0;
+
         if (earnedInterest >= fee) {
             // Path A: Profitable (or no fee)
             uint256 userInterest = earnedInterest - fee;
-            
+
             // Pull full interest from Vault to SavingCore
-            usdc.transferFrom(address(vaultManager), address(this), earnedInterest);
+            usdc.transferFrom(
+                address(vaultManager),
+                address(this),
+                earnedInterest
+            );
             if (fee > 0) {
                 usdc.transfer(vaultManager.feeReceiver(), fee);
             }
-            
+
             // 3. Compound principal (only the user's portion of the interest)
             uint64 newPrincipal = userdeposit.principal + uint64(userInterest);
-            
+
             // 4. Overwrite deposit with current active plan parameters
             userdeposit.principal = newPrincipal;
-            userdeposit.maturityAt = uint40(block.timestamp + (currentPlan.tenorDays * 1 days));
+            userdeposit.maturityAt = uint40(
+                block.timestamp + (currentPlan.tenorDays * 1 days)
+            );
             userdeposit.aprBpsAtOpen = currentPlan.aprbps; // Adopts the current active plan APR
             userdeposit.penaltyBpsAtOpen = currentPlan.withdrawalFeeBps;
             userdeposit.tenorDaysAtOpen = currentPlan.tenorDays;
-            
+
             // 5. Calculate new promised interest using current plan APR
             uint256 newPromisedInterest = _calculateInterest(
                 newPrincipal,
@@ -373,20 +395,33 @@ contract SavingCore is
                 currentPlan.tenorDays
             );
 
-            // 6. Adjust Vault debt
+            // 6. Adjust Vault debt safely
             if (newPromisedInterest > earnedInterest) {
-                vaultManager.increaseTotalPromisedInterest(newPromisedInterest - earnedInterest);
+                uint256 netIncrease = newPromisedInterest - earnedInterest;
+                if (
+                    usdc.balanceOf(address(vaultManager)) <
+                    vaultManager.totalPromisedInterest() + netIncrease
+                ) {
+                    return; // Skip auto-renew if vault cannot cover interest expansion
+                }
+                vaultManager.increaseTotalPromisedInterest(netIncrease);
             } else if (earnedInterest > newPromisedInterest) {
-                vaultManager.decreaseTotalPromisedInterest(earnedInterest - newPromisedInterest);
+                vaultManager.decreaseTotalPromisedInterest(
+                    earnedInterest - newPromisedInterest
+                );
             }
         } else {
             // Path B: Unprofitable Liquidation (earnedInterest < fee)
             // They don't make enough interest to cover the fee. Liquidate their position.
             uint256 principalDeduction = fee - earnedInterest;
-            
+
             // Pull the tiny earned interest from Vault
-            usdc.transferFrom(address(vaultManager), address(this), earnedInterest);
-            
+            usdc.transferFrom(
+                address(vaultManager),
+                address(this),
+                earnedInterest
+            );
+
             if (userdeposit.principal <= principalDeduction) {
                 // Complete Wipeout (Extremely rare edge case)
                 uint256 totalAvailable = userdeposit.principal + earnedInterest;
@@ -394,15 +429,16 @@ contract SavingCore is
                 userdeposit.principal = 0;
             } else {
                 // Normal Liquidation (Deduct deficit from principal and refund the rest)
-                uint256 remainingPrincipal = userdeposit.principal - principalDeduction;
+                uint256 remainingPrincipal = userdeposit.principal -
+                    principalDeduction;
                 usdc.transfer(vaultManager.feeReceiver(), fee);
                 usdc.transfer(ownerOf(depositId), remainingPrincipal);
                 userdeposit.principal = 0;
             }
-            
+
             // Decrease vault debt since we are closing and NOT renewing
             vaultManager.decreaseTotalPromisedInterest(earnedInterest);
-            
+
             // Close the deposit and burn the NFT to stop the bleeding
             userdeposit.status = DepositStatus.CLOSE;
             _burn(depositId);

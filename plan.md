@@ -146,14 +146,11 @@ To receive full credit for this capstone, the project must include:
 - **MDR:** Manual renew and auto-renew all compile and execute. Top-ups intentionally skipped.
 
 #### Day 5 (Wednesday, July 22): The Principal Safety Net (C1)
-- [ ] **Task 5.1: Implement C1 (Safe Principal)**
-  *Purpose:* Eliminate the "Hostage Principal" flaw, ensuring users can always retrieve their original capital even if the protocol cannot pay the yield right now.
-  - Modify `withdrawAtMaturity` to check `usdc.balanceOf(VaultManager)`.
-  - If the vault is empty (cannot pay interest), DO NOT revert.
-  - Transfer the user's principal back to them so their money is safe.
-  - Record the unpaid interest in a mapping `mapping(address => uint256) public owedInterest`.
-  - Write a new function `claimOwedInterest()` that the user can call later when the admin finally funds the vault.
-- **MDR:** Principal withdrawal logic gracefully degrades to an IOU system when the vault is empty.
+- [x] **Task 5.1: Implement C1 (Safe Principal / Full Reserve Yield Solvency)**
+  *Purpose:* Eliminate the "Hostage Principal" flaw by enforcing 100% Full Reserve Yield Pre-funding at deposit entry and renewals.
+  - Check `usdc.balanceOf(VaultManager) >= totalPromisedInterest + newInterest` in `openDeposit()`, `renewDeposit()`, and `_autoRenewDeposit()`.
+  - Guarantees the bank NEVER accepts a deposit unless its yield is 100% pre-funded in the vault, preventing empty vault scenarios when users mature.
+- **MDR:** Full Reserve Yield Pre-funding check enforces 100% interest solvency at entry.
 
 ### Phase 2: Auditing & Testing (July 23 - July 24)
 
