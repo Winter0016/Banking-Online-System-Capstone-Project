@@ -47,11 +47,12 @@ contract SavingCore is
         uint40 maturityAt; // 5 bytes (Unix Timestamp. Safe until the year 34,800!)
         uint32 aprBpsAtOpen; // 4 bytes
         uint32 penaltyBpsAtOpen; // 4 bytes
+        uint32 tenorDaysAtOpen; // 4 bytes
         uint32 planId; // 4 bytes (The ID of the plan they chose)
         bool enableBot; // 1 byte
         DepositStatus status; // 1 byte  (Enums are stored as uint8 under the hood)
     }
-    //total: 27 bytes
+    //total: 31 bytes (Fits perfectly in 1 storage slot!)
 
     mapping(uint256 => Plan) public plans;
     mapping(uint256 => Deposit) public deposits;
@@ -110,9 +111,10 @@ contract SavingCore is
             maturityAt: uint40(
                 block.timestamp + (plans[planId].tenorDays * 1 days)
             ),
-            // Snapshot the APR and Penalty so they are locked in for this specific user
+            // Snapshot the APR, Penalty, and Tenor so they are locked in for this specific user
             aprBpsAtOpen: plans[planId].aprbps,
             penaltyBpsAtOpen: plans[planId].withdrawalFeeBps,
+            tenorDaysAtOpen: plans[planId].tenorDays,
             planId: planId,
             enableBot: enableBot,
             status: DepositStatus.ACTIVE
@@ -141,7 +143,7 @@ contract SavingCore is
         uint256 interest = _calculateInterest(
             userdeposit.principal,
             userdeposit.aprBpsAtOpen,
-            plans[userdeposit.planId].tenorDays
+            userdeposit.tenorDaysAtOpen
         );
         vaultManager.decreaseTotalPromisedInterest(interest);
         userdeposit.status = DepositStatus.CLOSE;
@@ -163,31 +165,32 @@ contract SavingCore is
             "Maturity not reached yet."
         );
 
-        // Gas Optimization: Cache the plan in memory so we only do ONE storage read (Sload)
+        // Fetch the current plan settings for the new term
         Plan memory currentPlan = plans[userdeposit.planId];
 
-        // 1. Calculate earned interest using cached memory
+        // 1. Calculate earned interest for completed term using snapshotted APR and snapshotted Tenor
         uint256 earnedInterest = _calculateInterest(
             userdeposit.principal,
             userdeposit.aprBpsAtOpen,
-            currentPlan.tenorDays
+            userdeposit.tenorDaysAtOpen
         );
 
         // 2. Compound principal
         uint64 newPrincipal = userdeposit.principal + uint64(earnedInterest);
 
-        // 3. Pull the earned interest from VaultManager to SavingCore
+        // 3. Pull earned interest from VaultManager to SavingCore
         usdc.transferFrom(address(vaultManager), address(this), earnedInterest);
 
-        // 4. Overwrite the existing deposit directly
+        // 4. Overwrite existing deposit directly with updated APR and Tenor from current plan
         userdeposit.principal = newPrincipal;
         userdeposit.maturityAt = uint40(
             block.timestamp + (currentPlan.tenorDays * 1 days)
         );
-        userdeposit.aprBpsAtOpen = currentPlan.aprbps; // Current plan APR
+        userdeposit.aprBpsAtOpen = currentPlan.aprbps; // Takes the UPDATED APR from the plan!
         userdeposit.penaltyBpsAtOpen = currentPlan.withdrawalFeeBps;
+        userdeposit.tenorDaysAtOpen = currentPlan.tenorDays; // Snapshot the new tenor
 
-        // 5. Calculate new promised interest
+        // 5. Calculate new promised interest using the updated APR and Tenor
         uint256 newPromisedInterest = _calculateInterest(
             newPrincipal,
             currentPlan.aprbps,
@@ -195,7 +198,6 @@ contract SavingCore is
         );
 
         // Gas Optimization: Combine the two external calls into ONE single call!
-        // Instead of decreasing the old interest and increasing the new, we just calculate the net difference.
         if (newPromisedInterest > earnedInterest) {
             vaultManager.increaseTotalPromisedInterest(
                 newPromisedInterest - earnedInterest
@@ -228,7 +230,7 @@ contract SavingCore is
         uint256 promisedInterestToSubtract = _calculateInterest(
             uint64(withdrawAmount),
             userdeposit.aprBpsAtOpen,
-            plans[userdeposit.planId].tenorDays
+            userdeposit.tenorDaysAtOpen
         );
         vaultManager.decreaseTotalPromisedInterest(promisedInterestToSubtract);
 
@@ -325,11 +327,11 @@ contract SavingCore is
 
         Plan memory currentPlan = plans[userdeposit.planId];
 
-        // 1. Calculate earned interest
+        // 1. Calculate earned interest for completed term using snapshotted APR and Tenor
         uint256 earnedInterest = _calculateInterest(
             userdeposit.principal,
             userdeposit.aprBpsAtOpen,
-            currentPlan.tenorDays
+            userdeposit.tenorDaysAtOpen
         );
 
         // 2. DeFi Liquidation Engine & Automation Fee
@@ -351,8 +353,9 @@ contract SavingCore is
             // 4. Overwrite deposit
             userdeposit.principal = newPrincipal;
             userdeposit.maturityAt = uint40(block.timestamp + (currentPlan.tenorDays * 1 days));
+            userdeposit.tenorDaysAtOpen = currentPlan.tenorDays;
             
-            // 5. Calculate new promised interest using original APR
+            // 5. Calculate new promised interest using original APR and new tenor
             uint256 newPromisedInterest = _calculateInterest(
                 newPrincipal,
                 userdeposit.aprBpsAtOpen,
