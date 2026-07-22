@@ -350,15 +350,17 @@ contract SavingCore is
             // 3. Compound principal (only the user's portion of the interest)
             uint64 newPrincipal = userdeposit.principal + uint64(userInterest);
             
-            // 4. Overwrite deposit
+            // 4. Overwrite deposit with current active plan parameters
             userdeposit.principal = newPrincipal;
             userdeposit.maturityAt = uint40(block.timestamp + (currentPlan.tenorDays * 1 days));
+            userdeposit.aprBpsAtOpen = currentPlan.aprbps; // Adopts the current active plan APR
+            userdeposit.penaltyBpsAtOpen = currentPlan.withdrawalFeeBps;
             userdeposit.tenorDaysAtOpen = currentPlan.tenorDays;
             
-            // 5. Calculate new promised interest using original APR and new tenor
+            // 5. Calculate new promised interest using current plan APR
             uint256 newPromisedInterest = _calculateInterest(
                 newPrincipal,
-                userdeposit.aprBpsAtOpen,
+                currentPlan.aprbps,
                 currentPlan.tenorDays
             );
 
