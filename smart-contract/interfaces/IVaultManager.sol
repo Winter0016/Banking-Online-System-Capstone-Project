@@ -6,4 +6,5 @@ interface IVaultManager {
     function increaseTotalPromisedInterest(uint256 amount) external;
     function decreaseTotalPromisedInterest(uint256 amount) external;
     function feeReceiver() external view returns (address);
+    function totalPromisedInterest() external view returns (uint256);
 }
