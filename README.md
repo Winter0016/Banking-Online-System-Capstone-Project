@@ -79,13 +79,13 @@ forge script script/Deploy.s.sol --rpc-url http://localhost:8545 --broadcast
 
 ### Question 1: Transferable Certificate
 - **Question:** The deposit NFT can be transferred. If Alice sells her NFT to Bob before maturity, who can withdraw - Alice or Bob? Is this behavior good or dangerous? Show the exact line in your code that decides this.
-- **Answer:** **Bob** can withdraw. All withdrawal functions check `require(msg.sender == ownerOf(depositId))` (e.g., [`SavingCore.sol#L132`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L132) and [`SavingCore.sol#L212`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L212)).
+- **Answer:** **Bob** can withdraw. All withdrawal functions in `SavingCore.sol` check `require(msg.sender == ownerOf(depositId))` (e.g., in `withdrawAtMaturity` and `earlyWithdraw`).
 - **Analysis:** This behavior is advantageous for secondary market liquidity: it turns illiquid term deposits into tradeable financial instruments (like real-world CDs). Alice can exit early without penalty by selling her NFT certificate, while Bob assumes ownership of the future yield. It is safe on-chain because the smart contract strictly validates current NFT ownership at the moment of execution.
 
 ### Question 2: Empty Vault
 - **Question:** A user reaches maturity but the vault does not have enough money for the interest. The spec says "revert". What problem does this create for the user, and what alternative design could you offer? Which one did you choose to follow, and why?
 - **Answer:** Reverting creates the **"Hostage Principal"** problem, where the bank holds the user's principal hostage simply because it cannot pay the interest.
-- **Our Design Choice:** We solved this via **Challenge C2 (Solvency Guard)** in [`VaultManager.sol#L36`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/VaultManager.sol#L36). `VaultManager` tracks `totalPromisedInterest` across all active deposits and prevents the Admin from withdrawing funds if `usdc.balanceOf(vault) - amount < totalPromisedInterest`. This mathematically guarantees the vault never drops below its yield obligations, preventing vault insolvency before users reach maturity.
+- **Our Design Choice:** We solved this via **Challenge C2 (Solvency Guard)** in `VaultManager.sol`. `VaultManager` tracks `totalPromisedInterest` across all active deposits and prevents the Admin from withdrawing funds if `usdc.balanceOf(vault) - amount < totalPromisedInterest`. This mathematically guarantees the vault never drops below its yield obligations, preventing vault insolvency before users reach maturity.
 
 ### Question 3: Dead Bot
 - **Question:** The auto-renew bot goes offline for one month. What happens to deposits that passed the grace period? Does the user lose anything? Propose one change that protects the user in this case.
@@ -96,26 +96,26 @@ forge script script/Deploy.s.sol --rpc-url http://localhost:8545 --broadcast
 - **Question:** The interest formula uses integer division, so some tiny amount is always lost to rounding. In your design, who keeps this dust - the user or the vault? Can the rounding ever cause a revert or a wrong balance? Prove your answer with one of your test cases.
 - **Answer:** In Solidity, integer division `(principal * aprBps * tenorDays) / (365 * 10000)` truncates down (floor division). The truncated "dust" fractions stay in `VaultManager`, benefiting the treasury.
 - **Safety:** Rounding down means the vault pays out slightly *less* than or equal to exact interest, so it can **never** cause insolvency, wrong balances, or reverts.
-- **Test Proof:** In `SavingCoreTest::test_openDeposit` ([`SavingCore.t.sol#L76`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/test/SavingCore.t.sol#L76)), expected interest is calculated using the identical floor formula (`172602739` units for 10,000 USDC), matching contract balance checks perfectly.
+- **Test Proof:** In `SavingCoreTest::test_openDeposit` in `SavingCore.t.sol`, expected interest is calculated using the identical floor formula (`172602739` units for 10,000 USDC), matching contract balance checks perfectly.
 
 ### Question 5: Boundary Times
 - **Question:** At the exact second of maturityAt, is a withdrawal "early" or "at maturity"? At the exact end of the grace period, can the user still manually renew? Show the comparison operators (>= or >) you used, and explain each choice.
 - **Answer:** 
-  - At the exact second of `maturityAt`, withdrawal is **"at maturity"** because `withdrawAtMaturity()` uses `block.timestamp >= userdeposit.maturityAt` ([`SavingCore.sol#L138`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L138)). `earlyWithdraw()` strictly uses `block.timestamp < userdeposit.maturityAt` ([`SavingCore.sol#L218`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L218)), ensuring no overlap.
-  - At the exact second of the grace period end (`maturityAt + 2 days`), the user **can still manually renew**. Chainlink Keeper automation in `checkUpkeep()` uses strict inequality `block.timestamp > d.maturityAt + 2 days` ([`SavingCore.sol#L286`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L286)). The bot can only trigger starting 1 second past grace period expiry.
+  - At the exact second of `maturityAt`, withdrawal is **"at maturity"** because `withdrawAtMaturity()` uses `block.timestamp >= userdeposit.maturityAt`. `earlyWithdraw()` strictly uses `block.timestamp < userdeposit.maturityAt`, ensuring no overlap.
+  - At the exact second of the grace period end (`maturityAt + 2 days`), the user **can still manually renew**. Chainlink Keeper automation in `checkUpkeep()` uses strict inequality `block.timestamp > d.maturityAt + 2 days`. The bot can only trigger starting 1 second past grace period expiry.
 
 ### Question 6: Disabled Plan with Active Deposits
 - **Question:** The admin disables a plan while many deposits from that plan are still active. What can those users still do? Can they still manually renew INTO the disabled plan? Justify your rule.
 - **Answer:** Active deposit holders are unaffected; they can hold to term and call `withdrawAtMaturity()` or `earlyWithdraw()`, as those functions read from the snapshotted `userdeposit` struct.
-- **Rule:** Users **cannot** open new deposits or manually renew into the disabled plan because `openDeposit()` enforces `require(plans[planId].enable, "plan is not enabled")` ([`SavingCore.sol#L100`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L100)). This prevents new capital commitments while honoring existing obligations.
+- **Rule:** Users **cannot** open new deposits or renew (manually or via bot) into a disabled plan because `openDeposit()` and `renewDeposit()` enforce `require(currentPlan.enable, "Plan is not enabled")`, and `checkUpkeep()` filters out disabled plans. This prevents new capital commitments while honoring existing obligations.
 
 ### Question 7: Attack Thinking
 - **Question:** Describe one realistic attack on your system and show the exact mechanism in your code that stops it.
 - **Answer:** **Reentrancy / Double Withdrawal Attack**. A malicious contract calls `withdrawAtMaturity()` and attempts to re-enter during the USDC transfer callback to withdraw twice.
 - **Protections:**
   1. `ReentrancyGuard` modifier `nonReentrant` on state-changing functions.
-  2. **Checks-Effects-Interactions Pattern:** State is updated (`userdeposit.status = DepositStatus.CLOSE` at [`SavingCore.sol#L147`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L147)) and NFT is burned ([`SavingCore.sol#L151`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L151)) *before* tokens are transferred.
-  3. Strict status check `require(userdeposit.status == DepositStatus.ACTIVE)` ([`SavingCore.sol#L134`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L134)) causes re-entrant calls to revert immediately.
+  2. **Checks-Effects-Interactions Pattern:** State is updated (`userdeposit.status = DepositStatus.CLOSE`) and NFT is burned (`_burn(depositId)`) *before* tokens are transferred.
+  3. Strict status check `require(userdeposit.status == DepositStatus.ACTIVE)` causes re-entrant calls to revert immediately.
 
 ---
 
@@ -125,17 +125,17 @@ Per Section 8.3 of the spec, bonus points are awarded for identifying gaps in th
 
 ### Challenge C1: Hostage Principal Protection
 - **What Problem:** Base spec reverts `withdrawAtMaturity()` if the vault is underfunded. An admin could underfund the vault and hold user principal hostage indefinitely.
-- **What Solution:** Solved via **Challenge C2 Solvency Guard** ([`VaultManager.sol#L36`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/VaultManager.sol#L36)). By enforcing `usdc.balanceOf(vault) - amount >= totalPromisedInterest` on all admin withdrawals, the contract mathematically prevents the vault from ever becoming empty or underfunded.
+- **What Solution:** Solved via **Challenge C2 Solvency Guard** in `VaultManager.sol`. By enforcing `usdc.balanceOf(vault) - amount >= totalPromisedInterest` on all admin withdrawals, the contract mathematically prevents the vault from ever becoming empty or underfunded.
 - **What Trade-off:** Restricts admin liquidity extraction, but guarantees 100% safety for user principal.
 
 ### Challenge C2: Solvency Guard
 - **What Problem:** The base spec allows the Admin to call `withdrawVault()` and drain the vault at any time, creating insolvency risks right before major user maturities.
-- **What Solution:** Track `totalPromisedInterest` across all active deposits in `VaultManager.sol`. `withdrawVault(amount)` enforces `require(usdc.balanceOf(address(this)) - amount >= totalPromisedInterest)` ([`VaultManager.sol#L36`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/VaultManager.sol#L36)).
+- **What Solution:** Track `totalPromisedInterest` across all active deposits in `VaultManager.sol`. `withdrawVault(amount)` enforces `require(usdc.balanceOf(address(this)) - amount >= totalPromisedInterest)`.
 - **What Trade-off:** Admin cannot remove promised interest funds from the vault, ensuring user yield is fully backed.
 
 ### Challenge C3: Partial Early Withdraw
 - **What Problem:** In the base spec, `earlyWithdraw()` is all-or-nothing. A user needing 10% liquidity is forced to break 100% of their deposit and pay a penalty on the full principal.
-- **What Solution:** Implemented `earlyWithdraw(depositId, withdrawAmount)` in [`SavingCore.sol#L210`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L210). Penalty applies strictly to `withdrawAmount`. The remaining principal stays active in the deposit NFT and continues earning interest.
+- **What Solution:** Implemented `earlyWithdraw(depositId, withdrawAmount)` in `SavingCore.sol`. Penalty applies strictly to `withdrawAmount`. The remaining principal stays active in the deposit NFT and continues earning interest.
 - **What Trade-off:** Slightly higher gas cost for math calculations during partial exit, but significantly improves user capital flexibility.
 
 ### Challenge C4: Top-Up Deposits (Omitted / Skipped Design Choice)
@@ -147,12 +147,12 @@ Per Section 8.3 of the spec, bonus points are awarded for identifying gaps in th
 
 #### 1. Slippage Protection (Admin Frontrunning Guard)
 - **What Problem:** Admin could call `updatePlan()` to lower the APR right before a user's `openDeposit()` transaction is mined, locking the user into a lower APR against their intent.
-- **What Solution:** Implemented `expectedAprBps` check in `openDeposit()` ([`SavingCore.sol#L99`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L99)): `require(expectedAprBps == plans[planId].aprbps, "aprBps do not match")`.
+- **What Solution:** Implemented `expectedAprBps` check in `openDeposit()` in `SavingCore.sol`: `require(expectedAprBps == plans[planId].aprbps, "aprBps do not match")`.
 - **What Trade-off:** Transaction reverts if APR changes in mempool, protecting user slippage.
 
 #### 2. Forced Auto-Renew Lock-in Failsafe (`enableBot` Opt-In)
 - **What Problem:** If a user intends to withdraw at maturity but is delayed past the 2-day grace period, an mandatory bot auto-renewal force-locks their capital for another full term (e.g., 180 days). The user is trapped: they must either wait another 6 months or pay a heavy early-withdrawal penalty to access their own money.
-- **What Solution:** Implemented the `enableBot` boolean flag in `openDeposit()` ([`SavingCore.sol#L97`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L97)). Users must explicitly opt-in to enable automation. If `enableBot == false`, `checkUpkeep()` ([`SavingCore.sol#L287`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L287)) ignores the deposit, allowing mature funds to sit safely idle so delayed users can withdraw 100% of their principal and yield anytime without penalty.
+- **What Solution:** Implemented the `enableBot` boolean flag in `openDeposit()` in `SavingCore.sol`. Users must explicitly opt-in to enable automation. If `enableBot == false`, `checkUpkeep()` in `SavingCore.sol` ignores the deposit, allowing mature funds to sit safely idle so delayed users can withdraw 100% of their principal and yield anytime without penalty.
 - **What Trade-off:** Non-automated deposits sit idle past maturity without earning new yield, but users maintain 100% control and avoid unexpected lock-in penalty traps.
 
 #### 3. Real-World Auto-Renew Rates & DeFi Liquidation Engine
@@ -160,6 +160,6 @@ Per Section 8.3 of the spec, bonus points are awarded for identifying gaps in th
   1. **Obsolete Rate Vulnerability (Section 3.5 Conflict):** Section 3.5 of the assignment spec suggests locking `autoRenewDeposit` to the original `aprBpsAtOpen`. However, if market interest rates drop, keeping an old locked rate across automated renewals creates a **Bank Insolvency / Rate Arbitrage Exploit** where users exploit obsolete high rates to drain the vault.
   2. **Yield Bleed Flaw:** Chainlink Automation costs fees. If a user's deposit earns less yield than the bot fee, repeated auto-renewals will slowly drain the user's principal.
 - **What Solution:** 
-  1. **Intentional Deviation from Spec Section 3.5 for Solvency:** Both `renewDeposit()` and `autoRenewDeposit()` update `userdeposit.aprBpsAtOpen = currentPlan.aprbps` ([`SavingCore.sol#L187`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L187) and [`SavingCore.sol#L355`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L355)). Auto-renewed certificates adopt the prevailing active market rate on the day of renewal, aligning 1:1 with real-world banking standards (HSBC, Chase, Yearn Finance) and protecting treasury solvency.
-  2. **Automation Fee & Unprofitable Liquidation Failsafe:** Implemented a 1 USDC `AUTOMATION_FEE` skimmed from yield. If `earnedInterest < AUTOMATION_FEE`, the contract deducts the deficit from principal, transfers remaining funds to the user, and burns the deposit NFT ([`SavingCore.sol#L368-L396`](file:///home/phucdeptrai/solidity-course/foundry-f23/banking-online-system-project/smart-contract/src/SavingCore.sol#L368-L396)) to stop micro-deposits from bleeding out.
+  1. **Intentional Deviation from Spec Section 3.5 for Solvency:** Both `renewDeposit()` and `autoRenewDeposit()` update `userdeposit.aprBpsAtOpen = currentPlan.aprbps` in `SavingCore.sol`. Auto-renewed certificates adopt the prevailing active market rate on the day of renewal, aligning 1:1 with real-world banking standards (HSBC, Chase, Yearn Finance) and protecting treasury solvency.
+  2. **Automation Fee & Unprofitable Liquidation Failsafe:** Implemented a 1 USDC `AUTOMATION_FEE` skimmed from yield. If `earnedInterest < AUTOMATION_FEE`, the contract deducts the deficit from principal, transfers remaining funds to the user, and burns the deposit NFT in `SavingCore.sol` to stop micro-deposits from bleeding out.
 - **What Trade-off:** Auto-renewed deposits adopt current active plan APRs (deviating from Section 3.5's naive rule), and micro-deposits are liquidated to cover automation fees, ensuring 100% long-term protocol solvency.

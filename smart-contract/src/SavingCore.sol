@@ -129,7 +129,7 @@ contract SavingCore is
         _safeMint(msg.sender, tokenId);
         usdc.transferFrom(msg.sender, address(this), principal);
     }
-    function withdrawAtMaturity(uint256 DepositId) external {
+    function withdrawAtMaturity(uint256 DepositId) external nonReentrant {
         Deposit storage userdeposit = deposits[DepositId];
         require(msg.sender == ownerOf(DepositId), "Not owner");
         require(
@@ -146,11 +146,15 @@ contract SavingCore is
             userdeposit.tenorDaysAtOpen
         );
         vaultManager.decreaseTotalPromisedInterest(interest);
+        
+        // Checks-Effects-Interactions Pattern: Update state & burn NFT BEFORE external token transfers!
         userdeposit.status = DepositStatus.CLOSE;
         uint256 WithdrawPrincipal = userdeposit.principal;
+        _burn(DepositId);
+
+        // External Transfers
         usdc.transfer(msg.sender, WithdrawPrincipal);
         usdc.transferFrom(address(vaultManager), msg.sender, interest);
-        _burn(DepositId);
     }
 
     function renewDeposit(uint256 depositId) external nonReentrant {
@@ -167,6 +171,7 @@ contract SavingCore is
 
         // Fetch the current plan settings for the new term
         Plan memory currentPlan = plans[userdeposit.planId];
+        require(currentPlan.enable, "Plan is not enabled");
 
         // 1. Calculate earned interest for completed term using snapshotted APR and snapshotted Tenor
         uint256 earnedInterest = _calculateInterest(
@@ -209,7 +214,7 @@ contract SavingCore is
         }
     }
 
-    function earlyWithdraw(uint256 DepositId, uint256 withdrawAmount) external {
+    function earlyWithdraw(uint256 DepositId, uint256 withdrawAmount) external nonReentrant {
         Deposit storage userdeposit = deposits[DepositId];
         require(msg.sender == ownerOf(DepositId), "Not owner");
         require(
@@ -285,7 +290,8 @@ contract SavingCore is
             if (
                 d.status == DepositStatus.ACTIVE &&
                 d.enableBot == true &&
-                block.timestamp > d.maturityAt + 2 days
+                block.timestamp > d.maturityAt + 2 days &&
+                plans[d.planId].enable == true
             ) {
                 validUpkeeps[validCount] = i;
                 validCount++;
@@ -326,6 +332,9 @@ contract SavingCore is
         }
 
         Plan memory currentPlan = plans[userdeposit.planId];
+        if (!currentPlan.enable) {
+            return; // Cannot auto-renew into a disabled plan
+        }
 
         // 1. Calculate earned interest for completed term using snapshotted APR and Tenor
         uint256 earnedInterest = _calculateInterest(
