@@ -20,6 +20,7 @@ import {
 contract SavingCore is
     ERC721,
     Ownable,
+    Pausable,
     ReentrancyGuard,
     AutomationCompatibleInterface
 {
@@ -91,12 +92,21 @@ contract SavingCore is
     function disablePlan(uint32 planId) external onlyOwner {
         _planAllowDeposit(planId, false);
     }
+
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     function openDeposit(
         uint32 planId,
         uint64 principal,
         uint32 expectedAprBps,
         bool enableBot
-    ) external {
+    ) external whenNotPaused {
         require(expectedAprBps == plans[planId].aprbps, "aprBps do not match");
         require(plans[planId].enable, "plan is not enabled");
         require(
@@ -162,7 +172,10 @@ contract SavingCore is
         usdc.transferFrom(address(vaultManager), msg.sender, interest);
     }
 
-    function renewDeposit(uint256 depositId) external nonReentrant {
+    function renewDeposit(
+        uint256 depositId,
+        uint32 expectedAprBps
+    ) external nonReentrant whenNotPaused {
         Deposit storage userdeposit = deposits[depositId];
         require(msg.sender == ownerOf(depositId), "Not owner");
         require(
@@ -176,6 +189,7 @@ contract SavingCore is
 
         // Fetch the current plan settings for the new term
         Plan memory currentPlan = plans[userdeposit.planId];
+        require(expectedAprBps == currentPlan.aprbps, "aprBps do not match");
         require(currentPlan.enable, "Plan is not enabled");
 
         // 1. Calculate earned interest for completed term using snapshotted APR and snapshotted Tenor
@@ -187,6 +201,11 @@ contract SavingCore is
 
         // 2. Compound principal
         uint64 newPrincipal = userdeposit.principal + uint64(earnedInterest);
+        require(
+            newPrincipal >= currentPlan.minDeposit &&
+                newPrincipal <= currentPlan.maxDeposit,
+            "principal is not in range"
+        );
 
         // 3. Pull earned interest from VaultManager to SavingCore
         usdc.transferFrom(address(vaultManager), address(this), earnedInterest);
@@ -291,6 +310,10 @@ contract SavingCore is
         override
         returns (bool upkeepNeeded, bytes memory performData)
     {
+        if (paused()) {
+            return (false, "");
+        }
+
         // For the capstone demo, we will let the contract figure out the IDs entirely on-chain!
         // We ignore the checkData payload and loop through all existing deposits.
         uint256[] memory validUpkeeps = new uint256[](_DepositIdCounter);
@@ -326,7 +349,7 @@ contract SavingCore is
 
     function performUpkeep(
         bytes calldata performData
-    ) external override nonReentrant {
+    ) external override nonReentrant whenNotPaused {
         uint256[] memory depositIds = abi.decode(performData, (uint256[]));
         for (uint256 i = 0; i < depositIds.length; i++) {
             _autoRenewDeposit(depositIds[i]);
@@ -338,6 +361,7 @@ contract SavingCore is
 
         // Double check conditions at execution time
         if (
+            paused() ||
             userdeposit.status != DepositStatus.ACTIVE ||
             !userdeposit.enableBot ||
             block.timestamp <= userdeposit.maturityAt + 2 days
@@ -378,6 +402,12 @@ contract SavingCore is
 
             // 3. Compound principal (only the user's portion of the interest)
             uint64 newPrincipal = userdeposit.principal + uint64(userInterest);
+            if (
+                newPrincipal < currentPlan.minDeposit ||
+                newPrincipal > currentPlan.maxDeposit
+            ) {
+                return; // Skip auto-renew if compounded principal falls outside plan bounds
+            }
 
             // 4. Overwrite deposit with current active plan parameters
             userdeposit.principal = newPrincipal;

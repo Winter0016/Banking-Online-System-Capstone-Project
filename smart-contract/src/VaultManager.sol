@@ -1,17 +1,14 @@
 // SPDX-License-Identifier: MIT
 
 pragma solidity ^0.8.20;
-import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
-import {Pausable} from "openzeppelin-contracts/contracts/utils/Pausable.sol";
-import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-// import {
-//     AccessControl
-// } from "openzeppelin-contracts/contracts/access/AccessControl.sol";
 
-contract VaultManager is Ownable, Pausable {
+import {Ownable} from "openzeppelin-contracts/contracts/access/Ownable.sol";
+import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+
+contract VaultManager is Ownable {
     IERC20 public usdc;
-    address public feeReceiver; // 20 bytes.
-    address public savingCore; // 20 bytes
+    address public feeReceiver;
+    address public savingCore;
     uint256 public totalPromisedInterest;
 
     modifier onlySavingCore() {
@@ -21,6 +18,7 @@ contract VaultManager is Ownable, Pausable {
         );
         _;
     }
+
     constructor(address _usdc) Ownable(msg.sender) {
         usdc = IERC20(_usdc);
     }
@@ -46,6 +44,7 @@ contract VaultManager is Ownable, Pausable {
     ) external onlySavingCore {
         totalPromisedInterest += amount;
     }
+
     function decreaseTotalPromisedInterest(
         uint256 amount
     ) external onlySavingCore {
@@ -54,22 +53,14 @@ contract VaultManager is Ownable, Pausable {
 
     function setFeeReceiver(address _feeReceiver) external onlyOwner {
         require(_feeReceiver != address(0), "Invalid address");
+        require(feeReceiver == address(0), "FeeReceiver already set");
         feeReceiver = _feeReceiver;
     }
+
     function setSavingCore(address _savingCore) external onlyOwner {
         require(_savingCore != address(0), "Invalid address");
+        require(savingCore == address(0), "SavingCore already set");
         savingCore = _savingCore;
-    }
-
-    function approveUSDC(address to, uint256 amount) external onlyOwner {
-        usdc.approve(to, amount);
-    }
-
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    function unpause() external onlyOwner {
-        _unpause();
+        usdc.approve(_savingCore, type(uint256).max);
     }
 }

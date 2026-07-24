@@ -96,11 +96,12 @@ contract Handler is Test {
         uint256 depositId = depositIdSeed % depositCounter;
 
         try savingCore.ownerOf(depositId) returns (address owner) {
-            (uint64 principal, uint40 maturityAt, , , , , , SavingCore.DepositStatus status) = savingCore.deposits(depositId);
+            (uint64 principal, uint40 maturityAt, , , , uint32 planId, , SavingCore.DepositStatus status) = savingCore.deposits(depositId);
             if (status != SavingCore.DepositStatus.ACTIVE || block.timestamp < maturityAt || principal == 0) return;
 
+            (, uint32 planApr, , , , ) = savingCore.plans(planId);
             vm.prank(owner);
-            try savingCore.renewDeposit(depositId) {} catch {}
+            try savingCore.renewDeposit(depositId, planApr) {} catch {}
         } catch {}
     }
 
@@ -127,6 +128,15 @@ contract Handler is Test {
         }
     }
 
+    function togglePause(bool pauseState) public {
+        vm.prank(admin);
+        if (pauseState) {
+            try savingCore.pause() {} catch {}
+        } else {
+            try savingCore.unpause() {} catch {}
+        }
+    }
+
     function warpTime(uint32 daysToWarp) public {
         daysToWarp = uint32(bound(daysToWarp, 1, 30 days));
         vm.warp(block.timestamp + daysToWarp);
@@ -150,7 +160,6 @@ contract InvariantTest is Test {
 
         vaultManager.setSavingCore(address(savingCore));
         vaultManager.setFeeReceiver(feeReceiver);
-        vaultManager.approveUSDC(address(savingCore), type(uint256).max);
 
         savingCore.createPlan(180, 350, 350, 100 * 1e6, 1000000 * 1e6, true);
 

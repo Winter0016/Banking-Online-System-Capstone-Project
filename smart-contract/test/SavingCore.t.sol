@@ -5,7 +5,9 @@ import {Test, console2} from "forge-std/Test.sol";
 import {SavingCore} from "../src/SavingCore.sol";
 import {VaultManager} from "../src/VaultManager.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
-import {IERC721Receiver} from "openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol";
+import {
+    IERC721Receiver
+} from "openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol";
 
 contract ReentrantAttacker is IERC721Receiver {
     SavingCore public savingCore;
@@ -47,12 +49,19 @@ contract MockFailingUSDC is MockUSDC {
         failTransfer = _fail;
     }
 
-    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+    function transferFrom(
+        address from,
+        address to,
+        uint256 amount
+    ) public override returns (bool) {
         if (failTransferFrom) return false;
         return super.transferFrom(from, to, amount);
     }
 
-    function transfer(address to, uint256 amount) public override returns (bool) {
+    function transfer(
+        address to,
+        uint256 amount
+    ) public override returns (bool) {
         if (failTransfer) return false;
         return super.transfer(to, amount);
     }
@@ -87,7 +96,6 @@ contract SavingCoreTest is Test {
         // Setup Vault permissions and fee receiver
         vaultManager.setSavingCore(address(savingCore));
         vaultManager.setFeeReceiver(feeReceiver);
-        vaultManager.approveUSDC(address(savingCore), type(uint256).max);
 
         // 2. Setup initial SavingCore plan (Plan 0)
         savingCore.createPlan(
@@ -169,16 +177,7 @@ contract SavingCoreTest is Test {
         vaultManager.setSavingCore(alice);
 
         vm.expectRevert();
-        vaultManager.pause();
-
-        vm.expectRevert();
-        vaultManager.unpause();
-
-        vm.expectRevert();
         vaultManager.withdrawVault(100 * 1e6);
-
-        vm.expectRevert();
-        vaultManager.approveUSDC(alice, 100);
 
         vm.stopPrank();
     }
@@ -217,19 +216,16 @@ contract SavingCoreTest is Test {
         vm.stopPrank();
     }
 
-    function test_VaultManager_pause_unpause_Success() public {
-        vm.startPrank(admin);
-        vaultManager.pause();
-        assertTrue(vaultManager.paused());
-        vaultManager.unpause();
-        assertFalse(vaultManager.paused());
-        vm.stopPrank();
+    function test_VaultManager_setSavingCore_AlreadySet_Revert() public {
+        vm.prank(admin);
+        vm.expectRevert("SavingCore already set");
+        vaultManager.setSavingCore(alice);
     }
 
-    function test_VaultManager_approveUSDC_Success() public {
+    function test_VaultManager_setFeeReceiver_AlreadySet_Revert() public {
         vm.prank(admin);
-        vaultManager.approveUSDC(alice, 500 * 1e6);
-        assertEq(usdc.allowance(address(vaultManager), alice), 500 * 1e6);
+        vm.expectRevert("FeeReceiver already set");
+        vaultManager.setFeeReceiver(alice);
     }
 
     // ==========================================
@@ -277,6 +273,82 @@ contract SavingCoreTest is Test {
         savingCore.openDeposit(0, 2000000 * 1e6, PLAN_APR_BPS, false); // Above max (1M USDC)
 
         vm.stopPrank();
+    }
+
+    function test_SavingCore_pause_unpause_OnlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        savingCore.pause();
+
+        vm.prank(admin);
+        savingCore.pause();
+        assertTrue(savingCore.paused());
+
+        vm.prank(alice);
+        vm.expectRevert();
+        savingCore.unpause();
+
+        vm.prank(admin);
+        savingCore.unpause();
+        assertFalse(savingCore.paused());
+    }
+
+    function test_openDeposit_RevertWhenPaused() public {
+        vm.prank(admin);
+        savingCore.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        savingCore.openDeposit(0, 1000 * 1e6, PLAN_APR_BPS, false);
+    }
+
+    function test_renewDeposit_RevertWhenPaused() public {
+        vm.prank(alice);
+        savingCore.openDeposit(0, 1000 * 1e6, PLAN_APR_BPS, false);
+
+        vm.warp(block.timestamp + PLAN_TENOR * 1 days);
+
+        vm.prank(admin);
+        savingCore.pause();
+
+        vm.prank(alice);
+        vm.expectRevert();
+        savingCore.renewDeposit(0, PLAN_APR_BPS);
+    }
+
+    function test_withdrawAtMaturity_SuccessWhenPaused() public {
+        vm.prank(alice);
+        savingCore.openDeposit(0, 1000 * 1e6, PLAN_APR_BPS, false);
+
+        vm.warp(block.timestamp + PLAN_TENOR * 1 days);
+
+        vm.prank(admin);
+        savingCore.pause();
+
+        // Emergency exit: user CAN STILL withdraw principal + interest when core is paused!
+        uint256 aliceBalBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        savingCore.withdrawAtMaturity(0);
+
+        assertGt(usdc.balanceOf(alice), aliceBalBefore);
+    }
+
+    function test_performUpkeep_RevertWhenPaused() public {
+        vm.prank(alice);
+        savingCore.openDeposit(0, 1000 * 1e6, PLAN_APR_BPS, true);
+
+        vm.warp(block.timestamp + (PLAN_TENOR * 1 days) + 3 days);
+
+        vm.prank(admin);
+        savingCore.pause();
+
+        (bool upkeepNeeded, ) = savingCore.checkUpkeep("");
+        assertFalse(upkeepNeeded);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = 0;
+        vm.expectRevert();
+        savingCore.performUpkeep(abi.encode(ids));
     }
 
     function test_openDeposit_RevertVaultUnderfunded() public {
@@ -465,7 +537,9 @@ contract SavingCoreTest is Test {
         vm.stopPrank();
     }
 
-    function test_earlyWithdraw_Reverts_ZeroAmount_And_ExceedsPrincipal() public {
+    function test_earlyWithdraw_Reverts_ZeroAmount_And_ExceedsPrincipal()
+        public
+    {
         vm.prank(alice);
         savingCore.openDeposit(0, 1000 * 1e6, PLAN_APR_BPS, false);
 
@@ -512,7 +586,7 @@ contract SavingCoreTest is Test {
         savingCore.updatePlan(0, 500);
 
         vm.prank(alice);
-        savingCore.renewDeposit(0);
+        savingCore.renewDeposit(0, 500);
 
         // Verify principal compounded and new APR adopted
         (
@@ -530,6 +604,17 @@ contract SavingCoreTest is Test {
         assertEq(newMaturity, uint40(block.timestamp + PLAN_TENOR * 1 days));
     }
 
+    function test_renewDeposit_RevertSlippage() public {
+        vm.prank(alice);
+        savingCore.openDeposit(0, 1000 * 1e6, PLAN_APR_BPS, false);
+
+        vm.warp(block.timestamp + PLAN_TENOR * 1 days);
+
+        vm.prank(alice);
+        vm.expectRevert("aprBps do not match");
+        savingCore.renewDeposit(0, PLAN_APR_BPS + 10);
+    }
+
     function test_renewDeposit_RateDrop_DecreasesPromisedInterest() public {
         uint64 depositAmount = 10000 * 1e6;
 
@@ -543,18 +628,9 @@ contract SavingCoreTest is Test {
         savingCore.updatePlan(0, 100);
 
         vm.prank(alice);
-        savingCore.renewDeposit(0);
+        savingCore.renewDeposit(0, 100);
 
-        (
-            ,
-            ,
-            uint32 newApr,
-            ,
-            ,
-            ,
-            ,
-
-        ) = savingCore.deposits(0);
+        (, , uint32 newApr, , , , , ) = savingCore.deposits(0);
         assertEq(newApr, 100);
     }
 
@@ -569,7 +645,7 @@ contract SavingCoreTest is Test {
 
         vm.prank(alice);
         vm.expectRevert("Plan is not enabled");
-        savingCore.renewDeposit(0);
+        savingCore.renewDeposit(0, PLAN_APR_BPS);
     }
 
     // ==========================================
@@ -800,16 +876,7 @@ contract SavingCoreTest is Test {
         ids[0] = 0;
         savingCore.performUpkeep(abi.encode(ids));
 
-        (
-            ,
-            ,
-            uint32 newApr,
-            ,
-            ,
-            ,
-            ,
-
-        ) = savingCore.deposits(0);
+        (, , uint32 newApr, , , , , ) = savingCore.deposits(0);
         assertEq(newApr, 10);
     }
 
@@ -863,11 +930,16 @@ contract SavingCoreTest is Test {
     function test_checkUpkeep_NoDeposits_ReturnsFalse() public {
         vm.startPrank(admin);
         VaultManager emptyVault = new VaultManager(address(usdc));
-        SavingCore emptyCore = new SavingCore(address(emptyVault), address(usdc));
+        SavingCore emptyCore = new SavingCore(
+            address(emptyVault),
+            address(usdc)
+        );
         emptyVault.setSavingCore(address(emptyCore));
         vm.stopPrank();
 
-        (bool upkeepNeeded, bytes memory performData) = emptyCore.checkUpkeep("");
+        (bool upkeepNeeded, bytes memory performData) = emptyCore.checkUpkeep(
+            ""
+        );
         assertFalse(upkeepNeeded);
         assertEq(performData.length, 0);
     }
@@ -877,19 +949,28 @@ contract SavingCoreTest is Test {
     // ==========================================
 
     function testFuzz_openDeposit(uint64 depositAmount, bool enableBot) public {
-        depositAmount = uint64(bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT));
+        depositAmount = uint64(
+            bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT)
+        );
 
         usdc.mint(alice, depositAmount);
         vm.prank(alice);
         savingCore.openDeposit(0, depositAmount, PLAN_APR_BPS, enableBot);
 
         assertEq(savingCore.ownerOf(0), alice);
-        uint256 expectedInterest = (uint256(depositAmount) * PLAN_APR_BPS * PLAN_TENOR) / (365 * 10000);
+        uint256 expectedInterest = (uint256(depositAmount) *
+            PLAN_APR_BPS *
+            PLAN_TENOR) / (365 * 10000);
         assertEq(vaultManager.totalPromisedInterest(), expectedInterest);
     }
 
-    function testFuzz_earlyWithdraw(uint64 depositAmount, uint64 withdrawRatioBps) public {
-        depositAmount = uint64(bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT));
+    function testFuzz_earlyWithdraw(
+        uint64 depositAmount,
+        uint64 withdrawRatioBps
+    ) public {
+        depositAmount = uint64(
+            bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT)
+        );
         withdrawRatioBps = uint64(bound(withdrawRatioBps, 100, 10000)); // 1% to 100%
 
         usdc.mint(alice, depositAmount);
@@ -898,7 +979,8 @@ contract SavingCoreTest is Test {
 
         vm.warp(block.timestamp + 30 days);
 
-        uint256 withdrawAmount = (uint256(depositAmount) * withdrawRatioBps) / 10000;
+        uint256 withdrawAmount = (uint256(depositAmount) * withdrawRatioBps) /
+            10000;
         if (withdrawAmount == 0) return;
 
         uint256 aliceBalBefore = usdc.balanceOf(alice);
@@ -909,8 +991,13 @@ contract SavingCoreTest is Test {
         assertGt(usdc.balanceOf(alice), aliceBalBefore);
     }
 
-    function testFuzz_withdrawAtMaturity(uint64 depositAmount, uint32 extraDays) public {
-        depositAmount = uint64(bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT));
+    function testFuzz_withdrawAtMaturity(
+        uint64 depositAmount,
+        uint32 extraDays
+    ) public {
+        depositAmount = uint64(
+            bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT)
+        );
         extraDays = uint32(bound(extraDays, 0, 365));
 
         usdc.mint(alice, depositAmount);
@@ -924,12 +1011,22 @@ contract SavingCoreTest is Test {
         vm.prank(alice);
         savingCore.withdrawAtMaturity(0);
 
-        uint256 expectedInterest = (uint256(depositAmount) * PLAN_APR_BPS * PLAN_TENOR) / (365 * 10000);
-        assertEq(usdc.balanceOf(alice) - aliceBalBefore, uint256(depositAmount) + expectedInterest);
+        uint256 expectedInterest = (uint256(depositAmount) *
+            PLAN_APR_BPS *
+            PLAN_TENOR) / (365 * 10000);
+        assertEq(
+            usdc.balanceOf(alice) - aliceBalBefore,
+            uint256(depositAmount) + expectedInterest
+        );
     }
 
-    function testFuzz_renewDeposit(uint64 depositAmount, uint32 newAprBps) public {
-        depositAmount = uint64(bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT));
+    function testFuzz_renewDeposit(
+        uint64 depositAmount,
+        uint32 newAprBps
+    ) public {
+        depositAmount = uint64(
+            bound(depositAmount, PLAN_MIN_DEPOSIT, PLAN_MAX_DEPOSIT - 50_000 * 1e6)
+        );
         newAprBps = uint32(bound(newAprBps, 100, 2000)); // 1% to 20% APR
 
         usdc.mint(alice, depositAmount);
@@ -942,18 +1039,9 @@ contract SavingCoreTest is Test {
         savingCore.updatePlan(0, newAprBps);
 
         vm.prank(alice);
-        savingCore.renewDeposit(0);
+        savingCore.renewDeposit(0, newAprBps);
 
-        (
-            ,
-            ,
-            uint32 actualApr,
-            ,
-            ,
-            ,
-            ,
-
-        ) = savingCore.deposits(0);
+        (, , uint32 actualApr, , , , , ) = savingCore.deposits(0);
         assertEq(actualApr, newAprBps);
     }
 
@@ -1013,7 +1101,9 @@ contract SavingCoreTest is Test {
 
         // Admin attempt to drain vault fails due to Solvency Guard
         vm.prank(admin);
-        vm.expectRevert("total promised interest is greater than the withdraw amount");
+        vm.expectRevert(
+            "total promised interest is greater than the withdraw amount"
+        );
         vaultManager.withdrawVault(vaultBal);
     }
 
@@ -1055,7 +1145,9 @@ contract SavingCoreTest is Test {
         vm.prank(alice);
         savingCore.openDeposit(0, principal, PLAN_APR_BPS, false);
 
-        uint256 expectedInterest = (uint256(principal) * PLAN_APR_BPS * PLAN_TENOR) / (365 * 10000);
+        uint256 expectedInterest = (uint256(principal) *
+            PLAN_APR_BPS *
+            PLAN_TENOR) / (365 * 10000);
 
         vm.warp(block.timestamp + PLAN_TENOR * 1 days);
 
@@ -1123,7 +1215,7 @@ contract SavingCoreTest is Test {
         // Renewing into disabled plan reverts
         vm.prank(alice);
         vm.expectRevert("Plan is not enabled");
-        savingCore.renewDeposit(0);
+        savingCore.renewDeposit(0, PLAN_APR_BPS);
 
         // Active deposit holder CAN STILL withdraw at maturity!
         uint256 aliceBalBefore = usdc.balanceOf(alice);
