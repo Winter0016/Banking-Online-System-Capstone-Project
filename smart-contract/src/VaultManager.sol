@@ -11,6 +11,11 @@ contract VaultManager is Ownable {
     address public savingCore;
     uint256 public totalPromisedInterest;
 
+    event VaultFunded(address indexed funder, uint256 amount);
+    event VaultWithdrawn(address indexed admin, uint256 amount);
+    event FeeReceiverSet(address indexed feeReceiver);
+    event SavingCoreSet(address indexed savingCore);
+
     modifier onlySavingCore() {
         require(
             msg.sender == savingCore,
@@ -27,6 +32,7 @@ contract VaultManager is Ownable {
         require(amount > 0, "Can't fund 0 to vault");
         bool succeed = usdc.transferFrom(msg.sender, address(this), amount);
         require(succeed, "Fail to transfer USDC to vault");
+        emit VaultFunded(msg.sender, amount);
     }
 
     function withdrawVault(uint256 amount) external onlyOwner {
@@ -37,6 +43,7 @@ contract VaultManager is Ownable {
         require(amount > 0, "Can't withdraw 0 from vault");
         bool succeed = usdc.transfer(msg.sender, amount);
         require(succeed, "Fail to transfer USDC from vault");
+        emit VaultWithdrawn(msg.sender, amount);
     }
 
     function increaseTotalPromisedInterest(
@@ -55,6 +62,7 @@ contract VaultManager is Ownable {
         require(_feeReceiver != address(0), "Invalid address");
         require(feeReceiver == address(0), "FeeReceiver already set");
         feeReceiver = _feeReceiver;
+        emit FeeReceiverSet(_feeReceiver);
     }
 
     function setSavingCore(address _savingCore) external onlyOwner {
@@ -62,5 +70,6 @@ contract VaultManager is Ownable {
         require(savingCore == address(0), "SavingCore already set");
         savingCore = _savingCore;
         usdc.approve(_savingCore, type(uint256).max);
+        emit SavingCoreSet(_savingCore);
     }
 }
